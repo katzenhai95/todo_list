@@ -1,4 +1,4 @@
-"""Auto-hide / auto-show when docked to screen edge."""
+"""Auto-hide / auto-show when docked to screen edge (left / right only)."""
 
 from __future__ import annotations
 
@@ -11,18 +11,18 @@ class Edge(Enum):
     NONE = auto()
     LEFT = auto()
     RIGHT = auto()
-    TOP = auto()
-    BOTTOM = auto()
 
 
 class EdgeManager:
-    """Manages auto-hide behaviour when window is docked to a screen edge.
+    """Manages auto-hide behaviour when window is docked to left or right screen edge.
 
     Behaviour:
-    - When the user drags the window to a screen edge and the mouse leaves
-      the window, it slides off-screen after a short delay.
-    - A small handle (3 px) remains visible.
+    - When the user drags the window near the left/right screen edge and
+      stops moving, it snaps flush to that edge.
+    - When the mouse leaves the window, it slides off-screen after a short
+      delay, leaving a 3 px handle visible.
     - When the mouse touches the handle, the window slides back into view.
+    - Top and bottom edges are ignored.
     """
 
     ANIMATION_STEPS = 8        # how many frames per slide
@@ -51,10 +51,16 @@ class EdgeManager:
         self._poll_running = False
         self._mouse_was_inside = False
 
+        # Snap-on-stop — driven by polling tick counter
+        self._near_edge_count = 0  # consecutive ticks near edge with mouse inside
+        self._snap_threshold = 2   # snap after this many consecutive edge-ticks (~300ms)
+
         self._start_polling()
 
     # ------------------------------------------------------------------ #
-    #  Public API
+    #  Snap-to-edge (triggered by polling when window lingers near edge)
+    # ------------------------------------------------------------------ #
+
     # ------------------------------------------------------------------ #
 
     def start(self) -> None:
@@ -62,6 +68,7 @@ class EdgeManager:
 
     def stop(self) -> None:
         self._poll_running = False
+        self._near_edge_count = 0
         if self._hide_after_id:
             self.window.after_cancel(self._hide_after_id)
             self._hide_after_id = None
@@ -90,7 +97,6 @@ class EdgeManager:
         if self._animating:
             return
 
-        # Get current window geometry
         try:
             wx = self.window.winfo_x()
             wy = self.window.winfo_y()
@@ -109,7 +115,6 @@ class EdgeManager:
             self._poll_hidden(mx, my, screen_w, screen_h)
             return
 
-        # Detect edge docking
         edge = self._detect_edge(wx, wy, ww, wh, screen_w, screen_h)
 
         if edge != Edge.NONE:
@@ -119,8 +124,39 @@ class EdgeManager:
                 if self._hide_after_id:
                     self.window.after_cancel(self._hide_after_id)
                     self._hide_after_id = None
+
+                # Snapping logic: if the window has been near this edge
+                # for _snap_threshold consecutive ticks (~300ms), snap it flush.
+                # already_snapped: skip re-snap ONLY when window is at the target
+                # position. Use a bounded range — NOT a one-sided >= — so that
+                # windows PAST the edge also trigger a corrective snap.
+                already_snapped = (
+                    (edge == Edge.LEFT and -3 <= wx <= 3)
+                    or (edge == Edge.RIGHT and abs((wx + ww) - screen_w) <= 3)
+                )
+                if already_snapped:
+                    self._near_edge_count = 0
+                else:
+                    self._near_edge_count += 1
+                    if self._near_edge_count >= self._snap_threshold:
+                        self._near_edge_count = 0
+                        # Use current size; don't trust _visible_width (may be stale)
+                        target_w = ww
+                        target_h = wh
+                        if edge == Edge.LEFT:
+                            snap_x = 0
+                        else:
+                            snap_x = screen_w - target_w
+                        self.window.geometry(
+                            f"{target_w}x{target_h}+{snap_x}+{wy}"
+                        )
+                        self._visible_x = snap_x
+                        self._visible_y = wy
+                        self._visible_width = target_w
+                        self._visible_height = target_h
+                        self._dock_edge = edge
+                        self._mouse_was_inside = True
             elif self._mouse_was_inside and self._dock_edge == edge:
-                # Mouse just left after being inside a docked window
                 self._mouse_was_inside = False
                 if not self._hide_after_id:
                     self._hide_after_id = self.window.after(
@@ -129,6 +165,7 @@ class EdgeManager:
         else:
             self._dock_edge = Edge.NONE
             self._mouse_was_inside = mouse_inside
+            self._near_edge_count = 0
             if self._hide_after_id:
                 self.window.after_cancel(self._hide_after_id)
                 self._hide_after_id = None
@@ -139,47 +176,36 @@ class EdgeManager:
 
     def _poll_hidden(self, mx: int, my: int, screen_w: int, screen_h: int) -> None:
         """When hidden, check if mouse approaches the handle area."""
-        wx = self.window.winfo_x()
         wy = self.window.winfo_y()
-        ww = self.window.winfo_width()
         wh = self.window.winfo_height()
 
-        trigger = False
-
         if self._dock_edge == Edge.LEFT:
-            # Hidden: wx = -(ww - HANDLE_WIDTH), handle at x=0..HANDLE_WIDTH
             trigger = (0 <= mx <= self.HANDLE_WIDTH + 5) and (wy <= my <= wy + wh)
         elif self._dock_edge == Edge.RIGHT:
-            # Hidden: wx = screen_w - HANDLE_WIDTH, handle at right edge
             trigger = (screen_w - self.HANDLE_WIDTH - 5 <= mx <= screen_w) and (wy <= my <= wy + wh)
-        elif self._dock_edge == Edge.TOP:
-            trigger = (wx <= mx <= wx + ww) and (0 <= my <= self.HANDLE_WIDTH + 5)
-        elif self._dock_edge == Edge.BOTTOM:
-            trigger = (wx <= mx <= wx + ww) and (screen_h - self.HANDLE_WIDTH - 5 <= my <= screen_h)
+        else:
+            trigger = False
 
         if trigger:
             self._start_show()
 
     # ------------------------------------------------------------------ #
-    #  Edge detection
+    #  Edge detection  (left / right only)
     # ------------------------------------------------------------------ #
 
     def _detect_edge(
         self, wx: int, wy: int, ww: int, wh: int, screen_w: int, screen_h: int
     ) -> Edge:
-        """Return which edge the window is docked to, or NONE."""
+        """Return which edge the window is docked to, or NONE.
+        Only left and right edges are detected."""
         if wx <= self.EDGE_THRESHOLD:
             return Edge.LEFT
         if wx + ww >= screen_w - self.EDGE_THRESHOLD:
             return Edge.RIGHT
-        if wy <= self.EDGE_THRESHOLD:
-            return Edge.TOP
-        if wy + wh >= screen_h - self.EDGE_THRESHOLD:
-            return Edge.BOTTOM
         return Edge.NONE
 
     # ------------------------------------------------------------------ #
-    #  Hide / Show animation
+    #  Hide / Show animation  (left / right only)
     # ------------------------------------------------------------------ #
 
     def _start_hide(self) -> None:
@@ -198,7 +224,6 @@ class EdgeManager:
         self._visible_height = wh
 
         screen_w = self.window.winfo_screenwidth()
-        screen_h = self.window.winfo_screenheight()
 
         if self._dock_edge == Edge.LEFT:
             target_x = -(ww - self.HANDLE_WIDTH)
@@ -206,12 +231,6 @@ class EdgeManager:
         elif self._dock_edge == Edge.RIGHT:
             target_x = screen_w - self.HANDLE_WIDTH
             target_y = wy
-        elif self._dock_edge == Edge.TOP:
-            target_x = wx
-            target_y = -(wh - self.HANDLE_WIDTH)
-        elif self._dock_edge == Edge.BOTTOM:
-            target_x = wx
-            target_y = screen_h - self.HANDLE_WIDTH
         else:
             return
 
@@ -229,14 +248,13 @@ class EdgeManager:
         self, from_x: int, from_y: int, to_x: int, to_y: int, *, hide: bool
     ) -> None:
         self._animating = True
-        self._hidden = hide  # set immediately so polling knows
+        self._hidden = hide
 
         dx = (to_x - from_x) / self.ANIMATION_STEPS
         dy = (to_y - from_y) / self.ANIMATION_STEPS
 
         def step(i: int = 0) -> None:
             if i >= self.ANIMATION_STEPS:
-                # Final position
                 try:
                     self.window.geometry(f"+{to_x}+{to_y}")
                 except tk.TclError:
