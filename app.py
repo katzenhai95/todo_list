@@ -358,6 +358,7 @@ class TodoApp(ctk.CTk):
         self.geometry(f"+{sw - self.WINDOW_WIDTH - 40}+80")
 
         # Always on top
+        self._topmost = True
         self.attributes("-topmost", True)
 
         # Data
@@ -403,7 +404,16 @@ class TodoApp(ctk.CTk):
 
         ctk.CTkButton(
             toolbar, text="设置", width=60, height=28, command=self._open_settings
-        ).pack(side="left")
+        ).pack(side="left", padx=(0, 4))
+
+        self._topmost_btn = ctk.CTkButton(
+            toolbar,
+            text="取消置顶",
+            width=76,
+            height=28,
+            command=self._toggle_topmost,
+        )
+        self._topmost_btn.pack(side="left")
 
         # Current hotkey hint
         self._hotkey_hint = ctk.CTkLabel(
@@ -597,6 +607,18 @@ class TodoApp(ctk.CTk):
 
     def _open_settings(self) -> None:
         SettingsDialog(self, self._hotkey_manager, on_save=self._restart_hotkey)
+
+    # ------------------------------------------------------------------ #
+    #  Topmost toggle
+    # ------------------------------------------------------------------ #
+
+    def _toggle_topmost(self) -> None:
+        """Toggle always-on-top behaviour."""
+        self._topmost = not self._topmost
+        self.attributes("-topmost", self._topmost)
+        self._topmost_btn.configure(
+            text="取消置顶" if self._topmost else "置顶"
+        )
 
     # ------------------------------------------------------------------ #
     #  Lifecycle
