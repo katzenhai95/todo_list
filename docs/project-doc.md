@@ -80,8 +80,8 @@ main.py
 
 | 层次 | 位置 | 实现要点 |
 |------|------|----------|
-| 全局监听 | `hotkey.py` — `HotkeyManager` | 封装 `pynput.keyboard.Listener`，后台线程持续监听。维护 `_pressed` 集合追踪当前按下的键，当 `_pressed == 期望组合` 时触发回调。 |
-| 线程调度 | `app.py` — `TodoApp.quick_add()` | `HotkeyManager` 的回调在 pynput 线程中执行；通过 `self.after(0, _show)` 将实际 UI 操作安全调度到 tkinter 主线程。 |
+| 全局监听 | `hotkey.py` — `HotkeyManager` | 使用 `keyboard` 库的 `add_hotkey()` 注册全局热键（格式 `"ctrl+t"`），按下时自动触发回调。`keyboard` 库通过 Windows 底层钩子实现，比 pynput 更可靠。 |
+| 回调触发 | `hotkey.py` — `_on_trigger()` | 热键匹配时调用 `self._callback()`，其中 `quick_add()` 通过 `self.after(0, _show)` 将 UI 操作安全调度到 tkinter 主线程。 |
 | 弹窗 UI | `app.py` — `QuickAddPopup` | 继承 `CTkToplevel`，360×160 居中显示，`-topmost` 置顶。包含优先级下拉菜单、文本输入框（自动聚焦）、"添加"按钮。回车触发添加，Esc 关闭弹窗。 |
 | 添加回调 | `app.py` — `TodoApp._on_quick_add()` | 弹窗关闭时通过回调将文本和优先级传回主窗口，调用 `_add_item()` 完成添加。 |
 
@@ -184,7 +184,7 @@ main.py
 | 设置入口 | `app.py` — `TodoApp._open_settings()` | 工具栏"设置"按钮 → 实例化 `SettingsDialog`。 |
 | 录制 UI | `app.py` — `SettingsDialog` | 380×280 弹窗。点击"录制"后通过 `<KeyPress>`/`<KeyRelease>` 事件捕获按键。修饰键 (Ctrl/Alt/Shift/Win) 通过 `keysym` 映射表归一化；普通键取 `keysym.lower()`。 |
 | 录制校验 | `SettingsDialog._finish_recording()` | 必须包含 ≥1 个修饰键 + 1 个普通键，否则显示红色提示不完成录制。 |
-| 保存生效 | `SettingsDialog._save()` | 调用 `HotkeyManager.set_hotkey(modifiers, key)`，内部更新 `_hotkey` 并写入 `hotkey_config.json` → 通知主窗口重启监听器 (`_restart_hotkey()`)。 |
+| 保存生效 | `SettingsDialog._save()` | 调用 `HotkeyManager.set_hotkey(modifiers, key)`，内部先 `unhook_all()` 清除旧热键，再 `add_hotkey()` 注册新热键，同时写入 `hotkey_config.json`。 |
 
 ---
 
@@ -192,10 +192,10 @@ main.py
 
 | 层次 | 位置 | 实现要点 |
 |------|------|----------|
-| 配置格式 | `hotkey.py` — `Hotkey.to_dict()` / `from_dict()` | `{"modifiers": ["alt", "ctrl"], "key": "n"}` — modifiers 按字母排序保证可复现。`display` 属性生成 `"CTRL+ALT+N"` 用于 UI 展示。 |
-| 加载时机 | `hotkey.py` — `HotkeyManager.__init__()` | 构造函数检查 `hotkey_config.json` 是否存在且 JSON 合法，是则加载，否则退回默认值 `Ctrl+T`。 |
+| 配置格式 | `hotkey.py` — `Hotkey.to_dict()` / `from_dict()` | `{"modifiers": ["alt", "ctrl"], "key": "n"}` — modifiers 按字母排序。`to_keyboard_str()` 生成 `"ctrl+alt+n"` 格式供 `keyboard` 库使用。 |
+| 加载时机 | `hotkey.py` — `HotkeyManager.__init__()` | 构造函数检查 `hotkey_config.json` 存在且合法则加载，否则退回默认值 `Ctrl+T`。 |
 | 写入时机 | `hotkey.py` — `set_hotkey()` | 每次自定义快捷键时立即写入 `hotkey_config.json`。 |
-| 跨会话恢复 | `hotkey.py` — `_load_config()` | 两个独立 `HotkeyManager` 实例读取同一配置文件能得到相同结果。 |
+| 跨会话恢复 | `hotkey.py` — `_load_config()` | 独立 `HotkeyManager` 实例读取同一配置文件得相同结果。 |
 
 ---
 
@@ -270,4 +270,4 @@ python -m pytest tests -v
 
 ---
 
-*文档版本: 2.8 — 最后更新: 2026-05-23*
+*文档版本: 2.9 — 最后更新: 2026-05-24*

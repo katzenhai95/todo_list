@@ -20,6 +20,7 @@ Thumbs.db
 # Project data (runtime generated)
 todos.json
 hotkey_config.json
+*.log
 
 # Distribution
 dist/

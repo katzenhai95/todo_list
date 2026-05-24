@@ -1,22 +1,22 @@
-"""Global hotkey management using pynput."""
+"""Global hotkey management using the 'keyboard' library."""
 
 from __future__ import annotations
 
 import json
+import logging
 import os
-import threading
 from dataclasses import dataclass
 from typing import Callable
 
-from pynput.keyboard import Key, KeyCode, Listener
+import keyboard
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
 class Hotkey:
-    """Represents a hotkey combination."""
-
-    modifiers: set[str]  # e.g. {"ctrl", "alt", "shift"}
-    key: str             # e.g. "t", "n", "F1"
+    modifiers: set[str]
+    key: str
 
     @classmethod
     def default(cls) -> Hotkey:
@@ -34,13 +34,13 @@ class Hotkey:
         parts = sorted(self.modifiers) + [self.key]
         return "+".join(p.upper() for p in parts)
 
+    def to_keyboard_str(self) -> str:
+        """Convert to 'keyboard' library format, e.g. 'ctrl+t'."""
+        return "+".join(sorted(self.modifiers) + [self.key])
+
 
 class HotkeyManager:
-    """Manages a single global hotkey using pynput.
-
-    Listens globally and fires a callback when the configured combination
-    is pressed.
-    """
+    """Global hotkey using the 'keyboard' library."""
 
     CONFIG_PATH = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "hotkey_config.json"
@@ -49,110 +49,54 @@ class HotkeyManager:
     def __init__(self) -> None:
         self._hotkey = self._load_config()
         self._callback: Callable[[], None] | None = None
-        self._listener: Listener | None = None
-        self._pressed: set[str] = set()
-        self._lock = threading.Lock()
-
-    # ------------------------------------------------------------------ #
-    #  Public API
-    # ------------------------------------------------------------------ #
+        self._registered = False
 
     def start(self, callback: Callable[[], None]) -> None:
-        """Start listening for the hotkey. Callback runs on press."""
         self._callback = callback
-        self._listener = Listener(on_press=self._on_press, on_release=self._on_release)
-        self._listener.start()
+        self._register()
 
     def stop(self) -> None:
-        if self._listener:
-            self._listener.stop()
-            self._listener = None
+        self._unregister()
+        self._callback = None
 
     def set_hotkey(self, modifiers: set[str], key: str) -> None:
-        """Update the hotkey combination and persist to config."""
+        was_running = self._registered
+        self._unregister()
         self._hotkey = Hotkey(modifiers=modifiers, key=key)
         self._save_config(self._hotkey)
+        if was_running:
+            self._register()
 
     def get_hotkey(self) -> Hotkey:
         return self._hotkey
 
-    # ------------------------------------------------------------------ #
-    #  Listener callbacks
-    # ------------------------------------------------------------------ #
-
-    def _on_press(self, key: Key | KeyCode | None) -> None:
-        if key is None:
+    def _register(self) -> None:
+        if self._registered:
             return
+        try:
+            keyboard.add_hotkey(
+                self._hotkey.to_keyboard_str(), self._on_trigger
+            )
+            self._registered = True
+            _log.info("Hotkey registered: %s", self._hotkey.display)
+        except Exception as e:
+            _log.error("Failed to register hotkey: %s", e)
 
-        name = self._key_name(key)
-        with self._lock:
-            self._pressed.add(name)
+    def _unregister(self) -> None:
+        if self._registered:
+            try:
+                keyboard.remove_hotkey(self._hotkey.to_keyboard_str())
+            except Exception:
+                keyboard.clear_all_hotkeys()
+            self._registered = False
 
-        if self._match():
-            self._pressed.clear()  # prevent re-trigger
-            if self._callback:
-                # Schedule on main thread via tkinter's after
+    def _on_trigger(self) -> None:
+        _log.info("Hotkey triggered: %s", self._hotkey.display)
+        if self._callback:
+            try:
                 self._callback()
-
-    def _on_release(self, key: Key | KeyCode | None) -> None:
-        if key is None:
-            return
-        name = self._key_name(key)
-        with self._lock:
-            self._pressed.discard(name)
-
-    # ------------------------------------------------------------------ #
-    #  Matching
-    # ------------------------------------------------------------------ #
-
-    def _match(self) -> bool:
-        """Check if currently pressed keys match the configured hotkey."""
-        expected = self._hotkey.modifiers | {self._hotkey.key}
-        with self._lock:
-            return expected == self._pressed
-
-    # ------------------------------------------------------------------ #
-    #  Key name conversion
-    # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _key_name(key: Key | KeyCode) -> str:
-        if isinstance(key, KeyCode):
-            ch = key.char
-            return ch.lower() if ch else f"<{key.vk}>"
-        # Special keys
-        mapping = {
-            Key.ctrl: "ctrl",
-            Key.ctrl_l: "ctrl",
-            Key.ctrl_r: "ctrl",
-            Key.alt: "alt",
-            Key.alt_l: "alt",
-            Key.alt_r: "alt",
-            Key.shift: "shift",
-            Key.shift_l: "shift",
-            Key.shift_r: "shift",
-            Key.cmd: "win",
-            Key.cmd_l: "win",
-            Key.cmd_r: "win",
-            Key.tab: "tab",
-            Key.enter: "enter",
-            Key.esc: "esc",
-            Key.space: "space",
-            Key.backspace: "backspace",
-            Key.delete: "delete",
-            Key.up: "up",
-            Key.down: "down",
-            Key.left: "left",
-            Key.right: "right",
-            Key.f1: "f1", Key.f2: "f2", Key.f3: "f3", Key.f4: "f4",
-            Key.f5: "f5", Key.f6: "f6", Key.f7: "f7", Key.f8: "f8",
-            Key.f9: "f9", Key.f10: "f10", Key.f11: "f11", Key.f12: "f12",
-        }
-        return mapping.get(key, str(key))
-
-    # ------------------------------------------------------------------ #
-    #  Config persistence
-    # ------------------------------------------------------------------ #
+            except Exception as e:
+                _log.error("Hotkey callback failed: %s", e)
 
     def _load_config(self) -> Hotkey:
         if os.path.exists(self.CONFIG_PATH):

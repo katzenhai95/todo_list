@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from typing import Callable
@@ -12,6 +14,14 @@ from edge import EdgeManager
 from hotkey import HotkeyManager
 from models import Priority, TodoItem
 from storage import TodoStorage
+
+# Logging to file for diagnostics
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    filename=os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.log"),
+    filemode="w",
+)
 
 # ------------------------------------------------------------------ #
 #  Theme
@@ -596,8 +606,8 @@ class TodoApp(ctk.CTk):
         self._hotkey_manager.start(callback=self.quick_add)
 
     def _restart_hotkey(self) -> None:
-        self._hotkey_manager.stop()
-        self._start_hotkey()
+        """Update the hint label after hotkey is changed.
+        set_hotkey() already handles unregister/register internally."""
         hk = self._hotkey_manager.get_hotkey()
         self._hotkey_hint.configure(text=hk.display)
 
@@ -621,7 +631,8 @@ class TodoApp(ctk.CTk):
         )
 
     # ------------------------------------------------------------------ #
-    #  Lifecycle
+    #  Hotkey — uses RegisterHotKey on a background thread's message-only
+    #  window to avoid GIL issues with WndProc subclassing
     # ------------------------------------------------------------------ #
 
     def _on_close(self) -> None:
