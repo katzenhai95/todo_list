@@ -122,7 +122,7 @@ main.py
 
 | 层次 | 位置 | 实现要点 |
 |------|------|----------|
-| 存储后端 | `storage.py` — `TodoStorage` | 默认路径为脚本同目录的 `todos.json`。`save()` 使用 `json.dump(ensure_ascii=False, indent=2)` 保证中文可读和格式化缩进。`load()` 将 JSON 数组逐项通过 `TodoItem.from_dict()` 还原。 |
+| 存储后端 | `storage.py` — `TodoStorage` | 默认路径 `%APPDATA%\TodoList\todos.json`（通过 `_data_dir()` 获取，自动创建目录），确保 PyInstaller 打包后持久化仍有效。 |
 | 容错处理 | `storage.py` — `load()` | 文件不存在 → 返回 `[]`；JSON 解析失败 (JSONDecodeError/KeyError/TypeError) → 返回 `[]`。确保首次启动或数据损坏时不崩溃。 |
 | 写入时机 | `app.py` | 每次增/删/改/导入操作完成后即时调用 `_save_data()`；关闭窗口时 `_on_close()` 再次调用。先遍历 widget 同步状态再写盘，避免数据丢失。 |
 | 加载时机 | `app.py` — `TodoApp.__init__()` | 构造函数末尾调用 `_load_data()`，从磁盘恢复上次会话的数据。 |
@@ -193,7 +193,7 @@ main.py
 | 层次 | 位置 | 实现要点 |
 |------|------|----------|
 | 配置格式 | `hotkey.py` — `Hotkey.to_dict()` / `from_dict()` | `{"modifiers": ["alt", "ctrl"], "key": "n"}` — modifiers 按字母排序。`to_keyboard_str()` 生成 `"ctrl+alt+n"` 格式供 `keyboard` 库使用。 |
-| 加载时机 | `hotkey.py` — `HotkeyManager.__init__()` | 构造函数检查 `hotkey_config.json` 存在且合法则加载，否则退回默认值 `Ctrl+T`。 |
+| 加载时机 | `hotkey.py` — `HotkeyManager.__init__()` | 通过 `_config_path()` 获取 `%APPDATA%\TodoList\hotkey_config.json`，存在且合法则加载，否则退回默认值。 |
 | 写入时机 | `hotkey.py` — `set_hotkey()` | 每次自定义快捷键时立即写入 `hotkey_config.json`。 |
 | 跨会话恢复 | `hotkey.py` — `_load_config()` | 独立 `HotkeyManager` 实例读取同一配置文件得相同结果。 |
 
@@ -270,4 +270,4 @@ python -m pytest tests -v
 
 ---
 
-*文档版本: 1.0.1 — 最后更新: 2026-05-24*
+*文档版本: 1.0.2 — 最后更新: 2026-05-24*

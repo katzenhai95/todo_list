@@ -1,4 +1,8 @@
-"""JSON-based persistence for todo items."""
+"""JSON-based persistence for todo items.
+
+Uses %APPDATA%/TodoList/ for storage so persistence works both in
+development and when packaged as a PyInstaller executable.
+"""
 
 from __future__ import annotations
 
@@ -12,16 +16,19 @@ from models import TodoItem
 DEFAULT_FILENAME = "todos.json"
 
 
+def _data_dir() -> str:
+    """Get the persistent data directory. Creates it if missing."""
+    base = os.environ.get("APPDATA", os.path.expanduser("~"))
+    path = os.path.join(base, "TodoList")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 class TodoStorage:
     """Handles loading and saving todo items to/from JSON."""
 
     def __init__(self, filepath: str | None = None) -> None:
-        self.filepath: str = filepath or self._default_path()
-
-    @staticmethod
-    def _default_path() -> str:
-        """Default save location next to the script."""
-        return os.path.join(os.path.dirname(os.path.abspath(__file__)), DEFAULT_FILENAME)
+        self.filepath: str = filepath or os.path.join(_data_dir(), DEFAULT_FILENAME)
 
     # ------------------------------------------------------------------ #
     #  Load / Save

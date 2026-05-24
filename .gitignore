@@ -25,4 +25,5 @@ hotkey_config.json
 # Distribution
 dist/
 build/
+*.spec
 *.egg-info/

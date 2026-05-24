@@ -40,17 +40,14 @@ class TestHotkeyManagerConfig:
     """TC-F011 / TC-F012: Hotkey config save/load/persistence."""
 
     @pytest.fixture
-    def temp_config_dir(self) -> str:
-        """Create a temp directory and monkey-patch CONFIG_PATH."""
+    def temp_config_dir(self, monkeypatch) -> str:
+        """Create a temp directory and monkey-patch _config_path."""
         import hotkey as hk_mod
 
         td = tempfile.mkdtemp()
-        original_path = hk_mod.HotkeyManager.CONFIG_PATH
-        hk_mod.HotkeyManager.CONFIG_PATH = os.path.join(td, "hotkey_config.json")
+        config_path = os.path.join(td, "hotkey_config.json")
+        monkeypatch.setattr(hk_mod.HotkeyManager, "_config_path", staticmethod(lambda: config_path))
         yield td
-        # Restore
-        hk_mod.HotkeyManager.CONFIG_PATH = original_path
-        # Cleanup
         try:
             os.remove(os.path.join(td, "hotkey_config.json"))
             os.rmdir(td)
@@ -89,7 +86,7 @@ class TestHotkeyManagerConfig:
         mgr.set_hotkey(modifiers={"ctrl"}, key="t")
 
         import hotkey as hk_mod
-        with open(hk_mod.HotkeyManager.CONFIG_PATH, "r", encoding="utf-8") as f:
+        with open(mgr._config_path(), "r", encoding="utf-8") as f:
             data = json.load(f)
         assert "modifiers" in data
         assert "key" in data

@@ -42,9 +42,14 @@ class Hotkey:
 class HotkeyManager:
     """Global hotkey using the 'keyboard' library."""
 
-    CONFIG_PATH = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "hotkey_config.json"
-    )
+    CONFIG_FILENAME = "hotkey_config.json"
+
+    @staticmethod
+    def _config_path() -> str:
+        base = os.environ.get("APPDATA", os.path.expanduser("~"))
+        path = os.path.join(base, "TodoList")
+        os.makedirs(path, exist_ok=True)
+        return os.path.join(path, HotkeyManager.CONFIG_FILENAME)
 
     def __init__(self) -> None:
         self._hotkey = self._load_config()
@@ -99,14 +104,15 @@ class HotkeyManager:
                 _log.error("Hotkey callback failed: %s", e)
 
     def _load_config(self) -> Hotkey:
-        if os.path.exists(self.CONFIG_PATH):
+        path = self._config_path()
+        if os.path.exists(path):
             try:
-                with open(self.CONFIG_PATH, "r", encoding="utf-8") as f:
+                with open(path, "r", encoding="utf-8") as f:
                     return Hotkey.from_dict(json.load(f))
             except (json.JSONDecodeError, KeyError):
                 pass
         return Hotkey.default()
 
     def _save_config(self, hotkey: Hotkey) -> None:
-        with open(self.CONFIG_PATH, "w", encoding="utf-8") as f:
+        with open(self._config_path(), "w", encoding="utf-8") as f:
             json.dump(hotkey.to_dict(), f, indent=2)
