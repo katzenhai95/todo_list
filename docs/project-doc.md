@@ -155,13 +155,15 @@ main.py
 
 | 层次 | 位置 | 实现要点 |
 |------|------|----------|
-| 吸附触发 | `edge.py` — `_tick()` | `_near_edge_count` 记录窗口在边缘区（≤15px）且鼠标在内的连续 tick，≥2 次直接 `geometry()` 吸附。**已吸附判定**：LEFT `-3 ≤ wx ≤ 3`，RIGHT `abs((wx+ww) - screen_w) ≤ 3`（对称范围，窗口超出边缘时不被误判为"已吸附"，会触发纠正性吸附）。 |
-| 轮询机制 | `edge.py` — `_poll()` / `_tick()` | 150ms 间隔非阻塞轮询。`_tick()` 获取窗口坐标和全局鼠标位置，判断鼠标是否在窗口内。 |
-| 边缘检测 | `edge.py` — `_detect_edge()` | 仅检测左右边缘：`wx ≤ 15` → LEFT，`wx+ww ≥ screen_w-15` → RIGHT。返回 NONE 表示不在边缘。 |
-| 隐藏时机 | `edge.py` — `_tick()` | 窗口已停靠 + 鼠标在窗口内 + 随后鼠标离开 → 启动 400ms 延迟定时器 → 到期后未取消则执行隐藏动画。 |
-| 动画 | `edge.py` — `_animate_slide()` | 8 帧，每帧 10ms（共 80ms），线性插值改变窗口 x 坐标。动画期间 `_animating=True` 阻止轮询。 |
-| 隐藏状态 | `edge.py` — `_start_hide()` | LEFT 隐藏：`wx = -(ww - 3)`，保留 3px 把手。RIGHT 隐藏：`wx = screen_w - 3`。 |
-| 鼠标获取 | `edge.py` — `_mouse_position()` | 通过 `ctypes.windll.user32.GetCursorPos` (Windows API) 获取全局坐标。 |
+| 吸附触发 | `edge.py` — `_tick()` | `_near_edge_count` 记录窗口在边缘区（≤15px）且鼠标在内的静止 tick（位置变化 ≤2px 视为静止，超出则清零避免拖拽时误吸附），≥2 次直接吸附。`already_snapped` 对称范围：LEFT `-3≤wx≤3`，RIGHT `abs((wx+ww)-screen_w)≤3`。 |
+| 轮询机制 | `edge.py` — `_poll()` / `_tick()` | 150ms 间隔。`_tick()` 获取窗口坐标和全局鼠标位置，判断鼠标是否在窗口内。`_prev_wx/_prev_wy` 追踪位置变化。 |
+| 边缘检测 | `edge.py` — `_detect_edge()` | 仅左右边缘：`wx≤15`→LEFT，`wx+ww≥screen_w-15`→RIGHT。 |
+| 隐藏时机 | `edge.py` — `_tick()` | 窗口已停靠 + 鼠标在窗口内 + 鼠标离开 → 400ms 延迟 → 隐藏动画。 |
+| 动画 | `edge.py` — `_animate_slide()` | 8 帧 ×10ms，线性插值。隐藏完成时记录 `_hide_time`，右侧追加 100ms 后 `_force_pos` 对抗 Windows 位置修正。 |
+| 弹出冷却 | `edge.py` — `_poll_hidden()` | `SHOW_COOLDOWN=1000ms`：隐藏后该时间内忽略 `_poll_hidden` 的弹出触发，防止隐藏后立即被弹回。 |
+| 隐藏状态 | `edge.py` — `_start_hide()` | LEFT：`wx=-(ww-3)`，3px 把手。RIGHT：`wx=screen_w-20`，20px 把手（Windows 对右侧大量离屏窗口可能跳过渲染，需更大把手）。 |
+| 鼠标获取 | `edge.py` — `_mouse_position()` | `ctypes.windll.user32.GetCursorPos` 全局坐标。 |
+| 调试日志 | `edge.py` — `_log.debug()` | 隐藏/弹出/force_pos 全程 DEBUG 日志输出到 `app.log`。 |
 
 ---
 
@@ -171,7 +173,7 @@ main.py
 
 | 层次 | 位置 | 实现要点 |
 |------|------|----------|
-| 隐藏态轮询 | `edge.py` — `_poll_hidden()` | `_hidden=True` 时检查鼠标是否接近把手（把手宽度 + 5px 容差）。LEFT 把手区域 `0 ≤ mx ≤ 8`，RIGHT 把手区域 `screen_w-8 ≤ mx ≤ screen_w`。 |
+| 隐藏态轮询 | `edge.py` — `_poll_hidden()` | LEFT 把手区域 `0≤mx≤8`，RIGHT `screen_w-25≤mx≤screen_w`。`SHOW_COOLDOWN=1000ms`：隐藏后该时间内忽略弹出触发，防止立即弹回。 |
 | 弹出触发 | `edge.py` — `_start_show()` | 鼠标进入把手区域 → 以 `_visible_x/_visible_y`（吸附时保存的位置）为终点执行滑入动画。 |
 | 状态恢复 | `edge.py` | 滑入完成时 `_hidden=False`，恢复正常轮询。 |
 

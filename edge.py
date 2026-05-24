@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import ctypes
+import logging
 import tkinter as tk
 from enum import Enum, auto
+
+_log = logging.getLogger(__name__)
 
 
 class Edge(Enum):
@@ -28,8 +31,10 @@ class EdgeManager:
     ANIMATION_STEPS = 8        # how many frames per slide
     ANIMATION_INTERVAL = 10    # ms between frames
     HIDE_DELAY = 400           # ms before hiding starts
-    HANDLE_WIDTH = 3           # px of the window left visible when hidden
+    HANDLE_WIDTH = 3           # px of the window left visible when hidden (LEFT)
+    RIGHT_HANDLE = 20           # px — wider handle for RIGHT (Windows rendering)
     EDGE_THRESHOLD = 15        # px from screen edge to trigger docking
+    SHOW_COOLDOWN = 1000       # ms — ignore show triggers within this window after hide
 
     def __init__(self, window: tk.Toplevel) -> None:
         self.window = window
@@ -45,6 +50,7 @@ class EdgeManager:
         self._hidden = False
         self._animating = False
         self._hide_after_id: str | None = None
+        self._hide_time: float = 0.0  # monotonic time when hide completed
 
         # Polling
         self._poll_interval = 150  # ms
@@ -54,6 +60,8 @@ class EdgeManager:
         # Snap-on-stop — driven by polling tick counter
         self._near_edge_count = 0  # consecutive ticks near edge with mouse inside
         self._snap_threshold = 2   # snap after this many consecutive edge-ticks (~300ms)
+        self._prev_wx: int | None = None
+        self._prev_wy: int | None = None  # track movement to cancel snap-on-drag
 
         self._start_polling()
 
@@ -125,7 +133,15 @@ class EdgeManager:
                     self.window.after_cancel(self._hide_after_id)
                     self._hide_after_id = None
 
-                # Snapping logic: if the window has been near this edge
+                # Reset snap counter if window is moving (user dragging)
+                if self._prev_wx is not None and (
+                    abs(wx - self._prev_wx) > 2 or abs(wy - self._prev_wy) > 2
+                ):
+                    self._near_edge_count = 0
+                self._prev_wx = wx
+                self._prev_wy = wy
+
+                # Snapping logic: if the window has been stationary near this edge
                 # for _snap_threshold consecutive ticks (~300ms), snap it flush.
                 # already_snapped: skip re-snap ONLY when window is at the target
                 # position. Use a bounded range — NOT a one-sided >= — so that
@@ -182,11 +198,15 @@ class EdgeManager:
         if self._dock_edge == Edge.LEFT:
             trigger = (0 <= mx <= self.HANDLE_WIDTH + 5) and (wy <= my <= wy + wh)
         elif self._dock_edge == Edge.RIGHT:
-            trigger = (screen_w - self.HANDLE_WIDTH - 5 <= mx <= screen_w) and (wy <= my <= wy + wh)
+            trigger = (screen_w - self.RIGHT_HANDLE - 5 <= mx <= screen_w) and (wy <= my <= wy + wh)
         else:
             trigger = False
 
         if trigger:
+            elapsed = __import__("time").monotonic() - self._hide_time
+            if elapsed < self.SHOW_COOLDOWN / 1000:
+                _log.debug("SHOW blocked by cooldown (%.0fms < %sms)", elapsed * 1000, self.SHOW_COOLDOWN)
+                return
             self._start_show()
 
     # ------------------------------------------------------------------ #
@@ -224,16 +244,30 @@ class EdgeManager:
         self._visible_height = wh
 
         screen_w = self.window.winfo_screenwidth()
+        screen_h = self.window.winfo_screenheight()
+
+        # Get working area (excludes taskbar) for comparison
+        wa = ctypes.wintypes.RECT()
+        ctypes.windll.user32.SystemParametersInfoW(0x30, 0, ctypes.byref(wa), 0)
+        _log.debug(
+            "screen=(%s,%s) workarea=(%s,%s,%s,%s)",
+            screen_w, screen_h, wa.left, wa.top, wa.right, wa.bottom,
+        )
 
         if self._dock_edge == Edge.LEFT:
             target_x = -(ww - self.HANDLE_WIDTH)
             target_y = wy
         elif self._dock_edge == Edge.RIGHT:
-            target_x = screen_w - self.HANDLE_WIDTH
+            target_x = screen_w - self.RIGHT_HANDLE
             target_y = wy
         else:
             return
 
+        _log.debug(
+            "HIDE [%s] from=(%s,%s) to=(%s,%s) ww=%s screen_w=%s handle=%s",
+            self._dock_edge.name, wx, wy, target_x, target_y,
+            ww, screen_w, self.HANDLE_WIDTH,
+        )
         self._animate_slide(wx, wy, target_x, target_y, hide=True)
 
     def _start_show(self) -> None:
@@ -260,6 +294,25 @@ class EdgeManager:
                 except tk.TclError:
                     pass
                 self._animating = False
+                if hide:
+                    self._hide_time = __import__("time").monotonic()
+
+                # Verify final position
+                try:
+                    fx = self.window.winfo_x()
+                    fy = self.window.winfo_y()
+                except tk.TclError:
+                    fx = fy = -1
+                _log.debug(
+                    "HIDE done target=(%s,%s) actual=(%s,%s)",
+                    to_x, to_y, fx, fy,
+                )
+
+                if hide and self._dock_edge == Edge.RIGHT:
+                    _log.debug("HIDE scheduling force_pos for RIGHT edge")
+                    self.window.after(
+                        100, lambda tx=to_x, ty=to_y: self._force_pos(tx, ty)
+                    )
                 return
             nx = int(from_x + dx * (i + 1))
             ny = int(from_y + dy * (i + 1))
@@ -275,6 +328,16 @@ class EdgeManager:
     # ------------------------------------------------------------------ #
     #  Helpers
     # ------------------------------------------------------------------ #
+
+    def _force_pos(self, x: int, y: int) -> None:
+        """Re-apply window position to override any Windows correction."""
+        try:
+            self.window.geometry(f"+{x}+{y}")
+            fx = self.window.winfo_x()
+            fy = self.window.winfo_y()
+            _log.debug("FORCE_POS target=(%s,%s) actual=(%s,%s)", x, y, fx, fy)
+        except tk.TclError:
+            _log.warning("FORCE_POS failed")
 
     @staticmethod
     def _mouse_position() -> tuple[int, int]:
