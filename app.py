@@ -504,6 +504,12 @@ class TodoApp(ctk.CTk):
         widget.destroy()
         self._save_data()
 
+    def _on_item_toggle(self, _widget: TodoItemWidget) -> None:
+        """Called when a checkbox is toggled: sync → save → sort → rebuild."""
+        self._save_data()
+        self._sort_items()
+        self._rebuild_list()
+
     def _sort_items(self) -> None:
         """Sort items: completed at bottom, then by priority descending, then by creation time."""
         self._items.sort(
@@ -522,7 +528,7 @@ class TodoApp(ctk.CTk):
                 self._list_frame,
                 item,
                 on_delete=self._delete_item,
-                on_toggle=lambda w: self._save_data(),
+                on_toggle=self._on_item_toggle,
             )
             widget.pack(fill="x", pady=2)
             self._item_widgets[item.item_id] = widget
