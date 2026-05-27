@@ -120,7 +120,7 @@ class EdgeManager:
         mouse_inside = (wx <= mx <= wx + ww) and (wy <= my <= wy + wh)
 
         if self._hidden:
-            self._poll_hidden(mx, my, screen_w, screen_h)
+            self._poll_hidden(mx, my, wx, wy, ww, wh, screen_w)
             return
 
         edge = self._detect_edge(wx, wy, ww, wh, screen_w, screen_h)
@@ -146,9 +146,13 @@ class EdgeManager:
                 # already_snapped: skip re-snap ONLY when window is at the target
                 # position. Use a bounded range — NOT a one-sided >= — so that
                 # windows PAST the edge also trigger a corrective snap.
+                # Get effective right-edge for multi-monitor
+                bounds = self._get_monitor_bounds(wx, wy, ww, wh)
+                eff_right = bounds[1] if bounds else screen_w
+
                 already_snapped = (
                     (edge == Edge.LEFT and -3 <= wx <= 3)
-                    or (edge == Edge.RIGHT and abs((wx + ww) - screen_w) <= 3)
+                    or (edge == Edge.RIGHT and abs((wx + ww) - eff_right) <= 3)
                 )
                 if already_snapped:
                     self._near_edge_count = 0
@@ -162,7 +166,7 @@ class EdgeManager:
                         if edge == Edge.LEFT:
                             snap_x = 0
                         else:
-                            snap_x = screen_w - target_w
+                            snap_x = eff_right - target_w
                         self.window.geometry(
                             f"{target_w}x{target_h}+{snap_x}+{wy}"
                         )
@@ -190,15 +194,15 @@ class EdgeManager:
     #  Hidden state polling
     # ------------------------------------------------------------------ #
 
-    def _poll_hidden(self, mx: int, my: int, screen_w: int, screen_h: int) -> None:
+    def _poll_hidden(self, mx: int, my: int, wx: int, wy: int, ww: int, wh: int, screen_w: int) -> None:
         """When hidden, check if mouse approaches the handle area."""
-        wy = self.window.winfo_y()
-        wh = self.window.winfo_height()
 
         if self._dock_edge == Edge.LEFT:
             trigger = (0 <= mx <= self.HANDLE_WIDTH + 5) and (wy <= my <= wy + wh)
         elif self._dock_edge == Edge.RIGHT:
-            trigger = (screen_w - self.RIGHT_HANDLE - 5 <= mx <= screen_w) and (wy <= my <= wy + wh)
+            bounds = self._get_monitor_bounds(wx, wy, ww, wh)
+            eff_right = bounds[1] if bounds else screen_w
+            trigger = (eff_right - self.RIGHT_HANDLE - 5 <= mx <= eff_right) and (wy <= my <= wy + wh)
         else:
             trigger = False
 
@@ -210,18 +214,43 @@ class EdgeManager:
             self._start_show()
 
     # ------------------------------------------------------------------ #
-    #  Edge detection  (left / right only)
+    #  Edge detection  (left / right only, multi-monitor aware)
     # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _get_monitor_bounds(wx: int, wy: int, ww: int, wh: int) -> tuple[int, int] | None:
+        """Return (left, right) of the monitor at window center, or None."""
+        try:
+            cx = wx + ww // 2
+            cy = wy + wh // 2
+            pt = ctypes.wintypes.POINT(cx, cy)
+            hmon = ctypes.windll.user32.MonitorFromPoint(pt, 2)
+            info = ctypes.wintypes.MONITORINFO()
+            info.cbSize = ctypes.sizeof(info)
+            if ctypes.windll.user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
+                return (info.rcMonitor.left, info.rcMonitor.right)
+        except Exception:
+            pass
+        return None
 
     def _detect_edge(
         self, wx: int, wy: int, ww: int, wh: int, screen_w: int, screen_h: int
     ) -> Edge:
-        """Return which edge the window is docked to, or NONE.
-        Only left and right edges are detected."""
+        """Return which edge the window is docked to, or NONE."""
+        # Check virtual desktop edges
         if wx <= self.EDGE_THRESHOLD:
             return Edge.LEFT
         if wx + ww >= screen_w - self.EDGE_THRESHOLD:
             return Edge.RIGHT
+
+        # Check per-monitor edges (multi-monitor)
+        bounds = self._get_monitor_bounds(wx, wy, ww, wh)
+        if bounds:
+            m_left, m_right = bounds
+            if m_left - self.EDGE_THRESHOLD <= wx <= m_left + self.EDGE_THRESHOLD:
+                return Edge.LEFT
+            if m_right - self.EDGE_THRESHOLD <= wx + ww <= m_right + self.EDGE_THRESHOLD:
+                return Edge.RIGHT
         return Edge.NONE
 
     # ------------------------------------------------------------------ #
@@ -244,21 +273,14 @@ class EdgeManager:
         self._visible_height = wh
 
         screen_w = self.window.winfo_screenwidth()
-        screen_h = self.window.winfo_screenheight()
-
-        # Get working area (excludes taskbar) for comparison
-        wa = ctypes.wintypes.RECT()
-        ctypes.windll.user32.SystemParametersInfoW(0x30, 0, ctypes.byref(wa), 0)
-        _log.debug(
-            "screen=(%s,%s) workarea=(%s,%s,%s,%s)",
-            screen_w, screen_h, wa.left, wa.top, wa.right, wa.bottom,
-        )
 
         if self._dock_edge == Edge.LEFT:
             target_x = -(ww - self.HANDLE_WIDTH)
             target_y = wy
         elif self._dock_edge == Edge.RIGHT:
-            target_x = screen_w - self.RIGHT_HANDLE
+            bounds = self._get_monitor_bounds(wx, wy, ww, wh)
+            eff_right = bounds[1] if bounds else screen_w
+            target_x = eff_right - self.RIGHT_HANDLE
             target_y = wy
         else:
             return

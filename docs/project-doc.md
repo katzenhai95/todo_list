@@ -157,7 +157,7 @@ main.py
 |------|------|----------|
 | 吸附触发 | `edge.py` — `_tick()` | `_near_edge_count` 记录窗口在边缘区（≤15px）且鼠标在内的静止 tick（位置变化 ≤2px 视为静止，超出则清零避免拖拽时误吸附），≥2 次直接吸附。`already_snapped` 对称范围：LEFT `-3≤wx≤3`，RIGHT `abs((wx+ww)-screen_w)≤3`。 |
 | 轮询机制 | `edge.py` — `_poll()` / `_tick()` | 150ms 间隔。`_tick()` 获取窗口坐标和全局鼠标位置，判断鼠标是否在窗口内。`_prev_wx/_prev_wy` 追踪位置变化。 |
-| 边缘检测 | `edge.py` — `_detect_edge()` | 仅左右边缘：`wx≤15`→LEFT，`wx+ww≥screen_w-15`→RIGHT。 |
+| 边缘检测 | `edge.py` — `_detect_edge()` + `_get_monitor_right()` | 先检测虚拟桌面边缘，再通过 `MonitorFromPoint` API 获取窗口所在屏幕的右边界，支持多屏间边缘吸附。单次 API 调用无性能影响。 |
 | 隐藏时机 | `edge.py` — `_tick()` | 窗口已停靠 + 鼠标在窗口内 + 鼠标离开 → 400ms 延迟 → 隐藏动画。 |
 | 动画 | `edge.py` — `_animate_slide()` | 8 帧 ×10ms，线性插值。隐藏完成时记录 `_hide_time`，右侧追加 100ms 后 `_force_pos` 对抗 Windows 位置修正。 |
 | 弹出冷却 | `edge.py` — `_poll_hidden()` | `SHOW_COOLDOWN=1000ms`：隐藏后该时间内忽略 `_poll_hidden` 的弹出触发，防止隐藏后立即被弹回。 |
